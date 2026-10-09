@@ -11,7 +11,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "maturin>=1.7,<2"]
+dev = ["pytest>=8", "maturin>=1.7,<2", "pandas>=2.2"]
+# Phase 3 model training (GPU): install with the CUDA build of torch first
+ml = ["torch>=2.6", "transformers>=5", "peft>=0.15", "bitsandbytes>=0.45", "accelerate>=1.0",
+      "datasets>=3", "sentence-transformers>=5", "scikit-learn>=1.5", "pandas>=2.2"]
 
 [project.scripts]
 filing-signals = "filing_signals.cli:main"

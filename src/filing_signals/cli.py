@@ -34,6 +34,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("report", help="data-quality findings (sql/report.sql)")
     sub.add_parser("parse", help="extract Risk Factors and MD&A sections (Rust parser)")
     sub.add_parser("features", help="year-over-year section similarity (Lazy Prices)")
+    sub.add_parser("xbrl", help="XBRL facts: public float (size) and revenue (ground truth)")
     args = parser.parse_args(argv)
 
     args.data.mkdir(parents=True, exist_ok=True)
@@ -49,6 +50,10 @@ def main(argv: list[str] | None = None) -> None:
         sections.parse_all(con, args.data)
     if args.cmd == "features":
         features.compute(con)
+    if args.cmd == "xbrl":
+        from . import xbrl
+        client = EdgarClient(user_agent_from_env())
+        xbrl.load(Pipeline(con, client, RawStore(args.data / "raw")))
     if args.cmd == "report":
         report(con)
     else:

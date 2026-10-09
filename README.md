@@ -8,7 +8,9 @@ answer:
 |---|---|---|
 | 1 | **EDGAR ingestion → point-in-time filings warehouse** (Python, DuckDB) | ✅ done |
 | 2 | **Section extraction in Rust (via PyO3) → year-over-year change measures** | ✅ done |
-| 3 | Fine-tuned models: a FinBERT-class encoder, a QLoRA small LLM for extraction, an embedding model | next |
+| 3a | **Fine-tuned FinBERT: Risk Factors → adverse event in the next 12 months** | ✅ done |
+| 3b | QLoRA small LLM: read reported revenue out of MD&A (XBRL as ground truth) | code ready |
+| 3c | Fine-tuned embedder: paragraph-level change measure | code ready |
 | 4 | Pre-registered return test, judged with deflated Sharpe and PBO from [backtest-overfit-audit](https://github.com/Samarty-1/backtest-overfit-audit) | |
 
 ## Phase 1: what's in the warehouse
@@ -171,6 +173,48 @@ All three measures detect it, and TF-IDF does best in both sections. This is
 a check on the measures, not a causal claim, since firms that do deals differ
 in other ways too.
 
+## Phase 3a: does Risk Factors text predict trouble, and does fine-tuning help?
+
+**Target:** within 12 months *after* a 10-K, the company files an 8-K for
+bankruptcy (Item 1.03), a restatement (Item 4.02) or an auditor change
+(Item 4.01). The labels are strictly point-in-time:
+- Same-day 8-Ks don't count.
+- Filings whose 12-month window hadn't elapsed by the download date are
+  excluded (tested).
+
+That gives 5,875 reports. Training covers fiscal years up to 2017,
+validation 2018–19 and **test 2020–24** (1,560 reports, 163 events).
+Intervals come from a bootstrap that resamples whole **firms**.
+
+| Test years 2020–24 | AUC [95% CI] | Avg precision |
+|---|---|---|
+| Event in the prior year | 0.557 [0.52, 0.59] | 0.125 |
+| **Company size** (public float from the 10-K's XBRL cover) + prior event | **0.697** [0.65, 0.74] | 0.183 |
+| TF-IDF + logistic regression | 0.746 [0.71, 0.79] | 0.227 |
+| Fine-tuned FinBERT | 0.724 [0.68, 0.77] | 0.210 |
+| FinBERT + size + prior | 0.739 [0.70, 0.78] | 0.209 |
+
+**What the text model actually reads.** TF-IDF's top features are "penny
+stock", "broker-dealer", "going concern" and "limited operating history". The
+strongest negative ones are "pension", "credit facility" and "collective
+bargaining". Filing language is largely a **company-size detector**, and
+small companies change auditors far more often. So the real question is
+whether text beats size.
+
+- **Text over size + prior event: +0.043 AUC, CI [0.024, 0.064].** It's real
+  but modest. Text is strongest on **restatements** (0.76 against 0.61 for
+  size), where disclosed material weaknesses are a classic warning sign.
+  Size is better for bankruptcy.
+- **Fine-tuned FinBERT − TF-IDF: −0.022, CI [−0.041, −0.003].** The
+  110M-parameter transformer is significantly *worse* than a bag of words.
+  Combined with size, the two tie (−0.001, CI [−0.016, 0.014]).
+
+The FinBERT result is the honest kind of negative. There are 388 positive
+training documents of ~7,500 tokens each, seen through 512-token windows that
+all carry the document's label, and validation AUC peaked after one epoch.
+One pre-planned configuration was run, chosen by validation AUC and scored
+on the test years once. It was not tuned until it won.
+
 ## Engineering
 
 - **Polite client.** It caps at 8 requests/second (the SEC limit is 10),
@@ -187,12 +231,14 @@ in other ways too.
 - **Fast loads.** Bulk upserts go through Arrow. The first version used
   row-by-row `executemany` and took over two minutes per run on just a
   quarter's index.
-- **Tests.** There are 42 tests, all offline:
+- **Tests.** There are 49 tests, all offline:
   - The pipeline runs against a fake EDGAR. Tests cover the sampling
     decisions, amendment versions, point-in-time reads, after-hours dating,
     API offset measurement, missing documents and a no-op second run.
   - Every section-parsing spec runs against both the Python and Rust parsers.
   - The point-in-time pairing of change measures is checked.
+  - Phase 3 label windows, the size join and the revenue passage and
+    answerability logic are tested.
 
   CI builds the Rust extension and runs everything on Linux and Windows. It
   never calls the SEC.
