@@ -11,20 +11,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "maturin>=1.7,<2"]
 
 [project.scripts]
 filing-signals = "filing_signals.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+# maturin builds the Rust section parser (rust/) into filing_signals._parser
+# and packages the pure-Python sources from src/ alongside it
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-filing_signals = ["sql/*.sql"]
+[tool.maturin]
+python-source = "src"
+module-name = "filing_signals._parser"
+manifest-path = "rust/Cargo.toml"
+features = ["pyo3/extension-module"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

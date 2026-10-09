@@ -16,7 +16,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust unit checks
+        run: cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+      # maturin compiles rust/ into filing_signals._parser during the install
       - run: pip install -e ".[dev]"
-      # Offline: the tests drive the pipeline against a fake EDGAR, so CI never
-      # calls the SEC and needs no contact address.
+      - name: Rust extension is importable
+        run: python -c "from filing_signals import _parser; print('rust parser ok')"
+      # Offline: the pipeline tests use a fake EDGAR, and every section-parsing
+      # spec test runs against both the Python reference and the Rust parser.
       - run: pytest -q

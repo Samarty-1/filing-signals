@@ -1,0 +1,20 @@
+[package]
+name = "filing_parser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fancy-regex = "0.19.2"
+flate2 = "1.1.10"
+memchr = "2.8.3"
+pyo3 = { version = "0.29.3", features = ["abi3-py311", "generate-import-lib"] }
+rayon = "1.12.0"
+regex = "1.13.1"
+
+[lib]
+name = "_parser"
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

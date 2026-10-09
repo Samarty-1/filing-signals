@@ -10,6 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import features, sections
 from .http import EdgarClient, user_agent_from_env
 from .pipeline import Params, Pipeline
 from .warehouse import RawStore, connect
@@ -31,16 +32,23 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("status", help="summarise what the warehouse holds")
     sub.add_parser("report", help="data-quality findings (sql/report.sql)")
+    sub.add_parser("parse", help="extract Risk Factors and MD&A sections (Rust parser)")
+    sub.add_parser("features", help="year-over-year section similarity (Lazy Prices)")
     args = parser.parse_args(argv)
 
     args.data.mkdir(parents=True, exist_ok=True)
     con = connect(args.data / "filings.duckdb")
+    sections.register_view(con, args.data)
     if args.cmd == "ingest":
         client = EdgarClient(user_agent_from_env())
         pipe = Pipeline(con, client, RawStore(args.data / "raw"))
         pipe.run(Params(args.years[0], args.years[1], args.firms, args.seed, args.workers))
         s = client.stats
         print(f"done: {s.requests:,} requests, {s.retries} retries, {s.bytes / 1e9:.2f} GB")
+    if args.cmd == "parse":
+        sections.parse_all(con, args.data)
+    if args.cmd == "features":
+        features.compute(con)
     if args.cmd == "report":
         report(con)
     else:
@@ -49,7 +57,11 @@ def main(argv: list[str] | None = None) -> None:
 
 def report(con) -> None:
     from importlib import resources
-    text = resources.files("filing_signals").joinpath("sql", "report.sql").read_text()
+    sql_dir = resources.files("filing_signals").joinpath("sql")
+    text = sql_dir.joinpath("report.sql").read_text()
+    tables = {t for (t,) in con.execute("select table_name from information_schema.tables").fetchall()}
+    if "section_changes" in tables:
+        text += sql_dir.joinpath("validation.sql").read_text()
     for block in text.split("-- name: ")[1:]:
         name, sql = block.split("\n", 1)
         print(f"\n== {name.strip()}")

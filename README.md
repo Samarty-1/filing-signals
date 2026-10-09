@@ -7,8 +7,8 @@ answer:
 | Phase | | Status |
 |---|---|---|
 | 1 | **EDGAR ingestion → point-in-time filings warehouse** (Python, DuckDB) | ✅ done |
-| 2 | Section extraction (Risk Factors, MD&A) with a Rust parser via PyO3, plus a TF-IDF baseline | next |
-| 3 | Fine-tuned models: a FinBERT-class encoder, a QLoRA small LLM for extraction, an embedding model | |
+| 2 | **Section extraction in Rust (via PyO3) → year-over-year change measures** | ✅ done |
+| 3 | Fine-tuned models: a FinBERT-class encoder, a QLoRA small LLM for extraction, an embedding model | next |
 | 4 | Pre-registered return test, judged with deflated Sharpe and PBO from [backtest-overfit-audit](https://github.com/Samarty-1/backtest-overfit-audit) | |
 
 ## Phase 1: what's in the warehouse
@@ -75,6 +75,102 @@ select cik, fiscal_period_end, accession, version_no
 from annual_reports_as_of('2015-03-21 00:00:00+00');
 ```
 
+## Phase 2: sections and how much they change
+
+### Extracting Item 1A (Risk Factors) and Item 7 (MD&A)
+
+A 10-K mentions "Item 1A" several times: in the table of contents, as the
+real heading, and in cross-references ("see Item 1A herein"). The parser
+handles this as follows:
+1. Converts HTML to clean lines.
+2. Counts an Item heading only at the **start of a short line**, which skips
+   mid-sentence cross-references.
+3. Takes the occurrence with the **longest span** to the next later Item,
+   which skips the table of contents.
+4. Accepts headings without the word "Item" ("1A. RISK FACTORS"), which are
+   common, but only when the item's standard title follows, so numbered lists
+   don't match.
+5. Classifies the result explicitly instead of guessing:
+   - `found`
+   - `omitted`: "not required for smaller reporting companies"
+   - `by_reference`: "incorporated by reference" to an annual report
+   - `too_short`, `unterminated` or `not_found`
+
+The cleaning step decodes Windows-1252 bytes and `&#146;`-style entities
+(older filings use both for curly quotes), and it drops inline-XBRL hidden
+facts, scripts and comments.
+
+On the 6,907 original 10-Ks:
+
+| Section | Found | Legitimately absent | Not located |
+|---|---|---|---|
+| MD&A | **95.3%** | 1.4% (incorporated by reference / omitted) | 1.8% (+1.5% too short) |
+| Risk Factors | **84.8%** | 9.7% (smaller companies, not required) | 4.2% (+1.3% too short) |
+
+Most of the "not located" filings have no Item structure at all: some small
+filers and banks write their 10-K as a cross-reference index into an annual
+report. 10-K/A amendments are mostly "not found", which is correct, since a
+typical amendment only restates Part III (executive pay and governance).
+
+### Python spec, Rust implementation, identical output
+
+[`textparse.py`](src/filing_signals/textparse.py) is the readable
+specification. [`rust/src/core.rs`](rust/src/core.rs) implements the same
+algorithm with hand-written byte scanners instead of a chain of regex passes.
+Both run the same spec tests, and
+[`scripts/bench_parser.py`](scripts/bench_parser.py) runs both over every
+stored filing.
+
+| | Time for all 8,082 filings (18.8 GB HTML) | Throughput | Speedup |
+|---|---|---|---|
+| Python reference | 416 s | 45 MB/s | 1× |
+| Rust, one thread | 74 s | 253 MB/s | **5.6×** |
+| Rust, 12 threads, gunzip included | 18 s | | **22.9×** |
+| **Output mismatches** | **0 of 8,082** | | |
+
+The first Rust port copied the regex-pass structure and was only **1.1×**
+faster. Python's `re` is C, and the port allocated a new copy of each document
+on every pass, plus one string per tag. The 5.6× came from rewriting the
+passes as single-allocation scanners with exactly the same matching rules,
+including leftmost match, earliest closing tag and identical entity length
+limits. The parity check is what made that rewrite safe. Shared tables, such
+as the named-entity list, are generated from Python's
+([`scripts/gen_entities.py`](scripts/gen_entities.py)) so the two can't drift.
+
+### Change measures
+
+For every company, each section is compared with the same section a fiscal
+year earlier. That gives **10,431 pairs from 865 firms**. The comparison is
+point-in-time:
+- **This year** is the original 10-K as filed.
+- **Last year** is whichever version of the prior report was public at that
+  moment, so a later amendment can't leak backwards (tested).
+
+The three measures are raw term-frequency cosine, Jaccard of word sets and
+TF-IDF cosine.
+
+| | Pairs | Median cosine | Median Jaccard | Median TF-IDF | Near-verbatim copies |
+|---|---|---|---|---|---|
+| Risk Factors | 4,921 | 0.998 | 0.896 | 0.993 | **14.2%** |
+| MD&A | 5,510 | 0.993 | 0.786 | 0.975 | 1.2% |
+
+Raw cosine is **saturated**. Function words dominate it, so it barely moves.
+
+**Do the measures track real change?** There are no returns until Phase 4,
+but there is a check that doesn't need them. A company that completed an
+acquisition or disposal during the year (8-K Item 2.01, already in the
+warehouse) should rewrite more of its 10-K. AUC here is the probability that
+a pair spanning such a deal is *less* similar than one that doesn't:
+
+| | TF-IDF | Jaccard | Raw cosine |
+|---|---|---|---|
+| MD&A (865 vs 4,645 pairs) | **0.661** | 0.637 | 0.620 |
+| Risk Factors (793 vs 4,128 pairs) | **0.635** | 0.630 | 0.614 |
+
+All three measures detect it, and TF-IDF does best in both sections. This is
+a check on the measures, not a causal claim, since firms that do deals differ
+in other ways too.
+
 ## Engineering
 
 - **Polite client.** It caps at 8 requests/second (the SEC limit is 10),
@@ -91,23 +187,35 @@ from annual_reports_as_of('2015-03-21 00:00:00+00');
 - **Fast loads.** Bulk upserts go through Arrow. The first version used
   row-by-row `executemany` and took over two minutes per run on just a
   quarter's index.
-- **Tests.** 19 tests run offline against a fake EDGAR. They cover the
-  sampling decisions, amendment versions, point-in-time reads, after-hours
-  dating, API offset measurement, missing documents and a no-op second run.
-  CI runs them on Linux and Windows and never calls the SEC.
+- **Tests.** There are 42 tests, all offline:
+  - The pipeline runs against a fake EDGAR. Tests cover the sampling
+    decisions, amendment versions, point-in-time reads, after-hours dating,
+    API offset measurement, missing documents and a no-op second run.
+  - Every section-parsing spec runs against both the Python and Rust parsers.
+  - The point-in-time pairing of change measures is checked.
+
+  CI builds the Rust extension and runs everything on Linux and Windows. It
+  never calls the SEC.
 
 ## Run it
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev]"            # builds the Rust parser via maturin (needs a Rust toolchain)
 export EDGAR_USER_AGENT="your-project you@example.com"   # required by the SEC
 filing-signals ingest --years 2010 2024 --firms 1000      # ~45 min, ~1.3 GB on disk
-filing-signals report                                    # the findings above
+filing-signals parse                                     # Rust section parser, ~20 s
+filing-signals features                                  # year-over-year change measures
+filing-signals report                                    # every finding above
+python scripts/bench_parser.py                           # Python-vs-Rust parity and speed
 pytest
 ```
 
 The SEC rejects requests without a contact address in the User-Agent, so it
 is read from the environment and never committed.
+
+On Windows without Visual Studio's build tools, the GNU Rust toolchain works
+(`rustup-init --default-host x86_64-pc-windows-gnu`). PyO3's import-library
+step also needs `dlltool` on `PATH`, which MSYS2's binutils provides.
 
 **Known limitation.** `filers.current_tickers` holds today's tickers. Using
 them to map 2012 filings to prices would bring survivorship bias back in.

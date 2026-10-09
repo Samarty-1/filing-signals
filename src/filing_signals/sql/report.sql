@@ -106,3 +106,30 @@ select
     round(sum(bytes_stored) / 1e9, 2)           as stored_gb,
     round(sum(bytes_raw) / sum(bytes_stored), 1) as compression
 from documents;
+
+-- name: sections
+-- Section extraction outcome on original 10-Ks (amendments are mostly Part III
+-- only and legitimately contain neither section).
+select
+    s.section,
+    s.status,
+    count(*)                                                            as reports,
+    round(100.0 * count(*) / sum(count(*)) over (partition by s.section), 1) as pct
+from sections s
+join annual_reports a using (accession)
+where not a.is_amendment
+group by s.section, s.status
+order by s.section, reports desc;
+
+-- name: section_changes
+select
+    section,
+    count(*)                                    as pairs,
+    count(distinct cik)                         as firms,
+    round(median(sim_cosine), 3)                as median_cosine,
+    round(median(sim_jaccard), 3)               as median_jaccard,
+    round(median(sim_tfidf), 3)                 as median_tfidf,
+    round(100.0 * avg((sim_cosine > 0.9995)::int), 1) as pct_near_verbatim
+from section_changes
+group by section
+order by section;
