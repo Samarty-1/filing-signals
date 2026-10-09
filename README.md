@@ -9,7 +9,7 @@ answer:
 | 1 | **EDGAR ingestion → point-in-time filings warehouse** (Python, DuckDB) | ✅ done |
 | 2 | **Section extraction in Rust (via PyO3) → year-over-year change measures** | ✅ done |
 | 3a | **Fine-tuned FinBERT: Risk Factors → adverse event in the next 12 months** | ✅ done |
-| 3b | QLoRA small LLM: read reported revenue out of MD&A (XBRL as ground truth) | code ready |
+| 3b | **QLoRA-tuned 1.5B LLM: read reported revenue out of MD&A (XBRL as ground truth)** | ✅ done |
 | 3c | Fine-tuned embedder: paragraph-level change measure | code ready |
 | 4 | Pre-registered return test, judged with deflated Sharpe and PBO from [backtest-overfit-audit](https://github.com/Samarty-1/backtest-overfit-audit) | |
 
@@ -215,6 +215,51 @@ all carry the document's label, and validation AUC peaked after one epoch.
 One pre-planned configuration was run, chosen by validation AUC and scored
 on the test years once. It was not tuned until it won.
 
+## Phase 3b: can a small fine-tuned LLM read revenue out of MD&A?
+
+**Task.** The model gets MD&A passages from a 10-K and the fiscal year end,
+and must answer the year's total revenue in dollars, or `unknown`. The ground
+truth is the filing's **own XBRL**: a full-year revenue fact carrying this
+10-K's accession and ending on its fiscal period end, which excludes the
+prior-year comparatives. That needs no hand labelling and covers 3,749
+reports. MD&A runs to ~12k tokens, so the input is each revenue or sales line
+plus the six lines after it. That window matters because tables often put
+"Net sales" and "17,253" on separate lines.
+
+The figure is in the passage for about 73% of reports, in some written form
+(`$1.2 billion`, `1,234.5` in millions, `1,234,567` in thousands…). Those
+reports are *answerable*. On the rest the right answer is `unknown`, and the
+model was trained towards that, because training it to answer anyway teaches
+it to invent numbers.
+
+**Model.** Qwen2.5-1.5B-Instruct, loaded in 4-bit NF4 and frozen, with
+rank-16 LoRA adapters on every attention and MLP projection (18.5M trainable
+parameters). Loss is on the answer tokens only. It ran for one epoch over
+2,006 reports from fiscal years ≤2017, taking 44 minutes on an RTX 4070.
+
+| Test years 2020–24 (1,194 reports) | Correct on answerable (874) | Abstains on unanswerable (320) | Right when it answers |
+|---|---|---|---|
+| Regex (`revenue … $N [scale]`, table scale note) | 18.9% | 22.2% | 15.3% |
+| Same model, zero-shot, same prompt | 24.6% | 17.5% | 19.6% |
+| **QLoRA fine-tuned** | **48.4%** | **95.3%** | **91.4%** |
+
+"Correct" means within 0.5% of the XBRL figure.
+
+**Fine-tuning roughly doubles recall: +23.8 points over zero-shot on
+answerable reports, 95% CI [19.9, 27.5].** The bigger change is calibration.
+The zero-shot model answers 94% of the time and is right a fifth of the time.
+The tuned model answers 39% of the time and is right **91%** of the time.
+The zero-shot model's typical error is
+the unit: 388 of its answers on answerable reports are off by exactly 1,000×
+or 1,000,000×, because it copied a figure "in thousands" or "in millions"
+without scaling it. Fine-tuning fixed that, and taught it when to say it
+doesn't know.
+
+The tuned model also abstains on about half the answerable reports, so its
+recall is the open problem. For a data pipeline, high-precision answers with honest
+abstentions are the useful operating point, since an abstention can fall back
+to XBRL or a human.
+
 ## Engineering
 
 - **Polite client.** It caps at 8 requests/second (the SEC limit is 10),
@@ -237,8 +282,13 @@ on the test years once. It was not tuned until it won.
     API offset measurement, missing documents and a no-op second run.
   - Every section-parsing spec runs against both the Python and Rust parsers.
   - The point-in-time pairing of change measures is checked.
-  - Phase 3 label windows, the size join and the revenue passage and
-    answerability logic are tested.
+  - Phase 3 label windows, the size join, the revenue passage and
+    answerability logic, and the answer parsers are tested.
+- **Resumable GPU training.** QLoRA training checkpoints its adapter,
+  optimizer and schedule every 25 steps, and the seeded shuffle makes resuming
+  exact. On Windows the driver silently spills VRAM overflow into system RAM,
+  which made training **13× slower** halfway through. Capping PyTorch's share
+  of the card makes it free its cache instead.
 
   CI builds the Rust extension and runs everything on Linux and Windows. It
   never calls the SEC.

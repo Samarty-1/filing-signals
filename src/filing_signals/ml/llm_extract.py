@@ -174,12 +174,24 @@ def _generate(tok, model, df, batch, log) -> list[str]:
     return out
 
 
+CKPT_EVERY = 25     # optimizer steps between resumable checkpoints
+
+
+def _cap_gpu_memory():
+    """On Windows the driver silently spills VRAM overflow into system RAM,
+    which made training ~13x slower. Capping PyTorch's share makes its
+    allocator free cached blocks instead of growing past the card."""
+    import torch
+    torch.cuda.set_per_process_memory_fraction(0.85)
+
+
 def train(df: pd.DataFrame, out: Path, log=print) -> Path:
     import torch
-    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training, set_peft_model_state_dict
 
     random.seed(SEED)
     torch.manual_seed(SEED)
+    _cap_gpu_memory()
     tok, model = load_model()
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
     model = get_peft_model(model, LoraConfig(
@@ -199,11 +211,27 @@ def train(df: pd.DataFrame, out: Path, log=print) -> Path:
     total = math.ceil(len(examples) * EPOCHS / GRAD_ACCUM)
     sched = torch.optim.lr_scheduler.LambdaLR(
         optim, lambda s: min(1.0, (s + 1) / max(1, total // 20)) * max(0.0, 1 - s / total))
+    # resumable: the shuffle is seeded, so a checkpoint's step count says
+    # exactly which examples have been consumed
+    ckpt = out / "qlora_train_ckpt.pt"
+    start_step = 0
+    if ckpt.exists():
+        state = torch.load(ckpt, weights_only=False)
+        set_peft_model_state_dict(model, state["adapter"])
+        optim.load_state_dict(state["optim"])
+        sched.load_state_dict(state["sched"])
+        start_step = state["step"]
+        log(f"  resuming from step {start_step}/{total}")
+
     model.train()
     step, running, t0 = 0, 0.0, time.perf_counter()
     for epoch in range(EPOCHS):
         random.shuffle(examples)
         for k, (ids, labels) in enumerate(examples, start=1):
+            if (k - 1) // GRAD_ACCUM < start_step:      # already trained on
+                if k % GRAD_ACCUM == 0:
+                    step += 1
+                continue
             ids_t = torch.tensor([ids], device="cuda")
             labels_t = torch.tensor([labels], device="cuda")
             loss = model(input_ids=ids_t, labels=labels_t).loss / GRAD_ACCUM
@@ -217,14 +245,30 @@ def train(df: pd.DataFrame, out: Path, log=print) -> Path:
                 step += 1
                 if step % 25 == 0:
                     log(f"  step {step}/{total} loss {running / 25:.4f} "
-                        f"({(time.perf_counter() - t0) / 60:.1f} min)")
+                        f"({(time.perf_counter() - t0) / 60:.1f} min) {_rss()}")
                     running = 0.0
+                if step % CKPT_EVERY == 0:
+                    from peft import get_peft_model_state_dict
+                    torch.save({"step": step, "adapter": get_peft_model_state_dict(model),
+                                "optim": optim.state_dict(), "sched": sched.state_dict()}, ckpt)
+                    torch.cuda.empty_cache()
     adapter = out / "qlora_revenue_adapter"
     model.save_pretrained(adapter)
+    ckpt.unlink(missing_ok=True)
     return adapter
 
 
+def _rss() -> str:
+    try:
+        import psutil
+        return f"[process RAM {psutil.Process().memory_info().rss / 1e9:.1f} GB]"
+    except ImportError:
+        return ""
+
+
 def run(dataset: Path, out: Path, log=print) -> dict:
+    import gc
+
     import torch
 
     df = pd.read_parquet(dataset)
@@ -234,16 +278,32 @@ def run(dataset: Path, out: Path, log=print) -> dict:
                "train_answerable": round(float(tr.answerable.mean()), 3)}
 
     results["regex"] = score(te, [regex_extract(p) for p in te.passage])
-    log(f"regex: {results['regex']}")
+    log(f"regex: {results['regex']} {_rss()}")
 
-    tok, model = load_model()
-    zero = generate(tok, model, te, log=log)
+    # each stage is checkpointed, so an interrupted run resumes where it stopped
+    zero_path = out / "revenue_zero_shot.parquet"
+    if zero_path.exists():
+        zero = pd.read_parquet(zero_path).answer.tolist()
+        log("zero-shot: reusing saved answers")
+    else:
+        tok, model = load_model()
+        log(f"base model loaded {_rss()}")
+        zero = generate(tok, model, te, log=log)
+        pd.DataFrame({"accession": te.accession, "answer": zero}).to_parquet(zero_path)
+        del model
+        gc.collect()
+        torch.cuda.empty_cache()
     results["zero_shot"] = score(te, [parse_answer(a) for a in zero])
-    log(f"zero-shot: {results['zero_shot']}")
-    del model
-    torch.cuda.empty_cache()
+    log(f"zero-shot: {results['zero_shot']} {_rss()}")
 
-    adapter = train(tr, out, log=log)
+    adapter = out / "qlora_revenue_adapter"
+    if (adapter / "adapter_config.json").exists():
+        log("qlora: reusing trained adapter")
+    else:
+        adapter = train(tr, out, log=log)
+        gc.collect()
+        torch.cuda.empty_cache()
+    _cap_gpu_memory()
     tok, model = load_model(adapter)
     tuned = generate(tok, model, te, log=log)
     results["qlora"] = score(te, [parse_answer(a) for a in tuned])
