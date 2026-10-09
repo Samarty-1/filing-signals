@@ -37,7 +37,8 @@ def test_rate_limiter_spaces_requests():
     start = time.monotonic()
     for _ in range(11):
         limiter.wait()
-    assert time.monotonic() - start >= 10 / 50 * 0.95
+    # Windows' monotonic clock ticks every ~15.6 ms, so allow one tick of slack
+    assert time.monotonic() - start >= 10 / 50 - 0.016
 
 
 def test_retries_transient_errors(monkeypatch):
