@@ -10,7 +10,7 @@ answer:
 | 2 | **Section extraction in Rust (via PyO3) → year-over-year change measures** | ✅ done |
 | 3a | **Fine-tuned FinBERT: Risk Factors → adverse event in the next 12 months** | ✅ done |
 | 3b | **QLoRA-tuned 1.5B LLM: read reported revenue out of MD&A (XBRL as ground truth)** | ✅ done |
-| 3c | Fine-tuned embedder: paragraph-level change measure | code ready |
+| 3c | **Fine-tuned embedder: paragraph-level change measure** | ✅ done (negative) |
 | 4 | Pre-registered return test, judged with deflated Sharpe and PBO from [backtest-overfit-audit](https://github.com/Samarty-1/backtest-overfit-audit) | |
 
 ## Phase 1: what's in the warehouse
@@ -259,6 +259,49 @@ The tuned model also abstains on about half the answerable reports, so its
 recall is the open problem. For a data pipeline, high-precision answers with honest
 abstentions are the useful operating point, since an abstention can fall back
 to XBRL or a human.
+
+## Phase 3c: does a learned paragraph-level change measure beat TF-IDF?
+
+**Measure.** Each section is split into paragraphs (200+ characters) and
+embedded. For every paragraph this year, the measure takes the cosine
+distance to its nearest paragraph last year. *Novelty* is the
+length-weighted mean of those distances. Whole-document similarity can't tell
+"one new risk factor" from "everything lightly reworded", and this measure
+can.
+
+**Fine-tuning.** bge-small-en-v1.5 (33M parameters) was trained to ignore
+cosmetic edits. Training used 40,000 automatically mined pairs from fiscal
+years ≤2017, each the same paragraph in consecutive years, lightly edited
+(word Jaccard 0.6–0.95). Other paragraphs in the batch served as negatives
+(MultipleNegativesRankingLoss), and training took 31 minutes.
+
+**Test.** The Phase 2 check: does the measure rise when the company
+completed an acquisition or disposition (8-K Item 2.01) between the two
+reports? It was run on fiscal years 2020+, with firm-bootstrap CIs.
+
+| AUC, test FY 2020+ | MD&A (1,251 pairs, 152 deals) | Risk Factors (1,227, 153) |
+|---|---|---|
+| 1 − TF-IDF similarity (Phase 2) | **0.684** | **0.637** |
+| Novelty, base embedder | 0.655 | 0.575 |
+| Novelty, fine-tuned embedder | 0.661 | 0.570 |
+| Tuned − TF-IDF | −0.023 [−0.062, 0.016] | **−0.067 [−0.106, −0.028]** |
+| Tuned − base | +0.006 [−0.005, 0.018] | −0.005 [−0.013, 0.003] |
+
+**Neither embedder beats TF-IDF, and fine-tuning changed nothing.** The
+reasons:
+- **The fine-tuning objective was too easy.** Loss fell to ~0.003 within 10%
+  of the epoch. Telling a paragraph's edited twin from 63 random paragraphs
+  needs no new knowledge.
+- **The scores didn't change their ranking.** Tuned novelty has a Spearman
+  correlation of 0.98–0.99 with base novelty, so it stretched the scale
+  (median 0.045 → 0.117) without reordering any filings.
+- **Vocabulary carries the signal.** An acquisition brings in new segment
+  names, products and goodwill language. TF-IDF weights exactly those rare
+  words, while a semantic embedder is built to look past wording.
+
+A harder objective (hard negatives from the same filing, or labels from
+deal 8-Ks) would have to be chosen on the validation years before touching
+test again. That hasn't been done, so this stands as the result.
 
 ## Engineering
 
