@@ -8,6 +8,10 @@ measured by similarity between this year's section and last year's:
   sim_jaccard  |words in both| / |words in either|
   sim_tfidf    cosine similarity of TF-IDF vectors (IDF fit on all sections),
                which down-weights boilerplate every filing shares
+  sim_tfidf_pit  the same with IDF fit only on documents accepted before
+               1 January of the filing's acceptance year: the version a
+               return test may use, since it never weights words by how
+               common they become later
 
 Pairs are point-in-time. "This year" is the original 10-K, as filed. "Last
 year" is whichever version of the prior fiscal year's report was public at
@@ -81,12 +85,19 @@ qualify row_number() over (
 """
 
 
+def _pit_sim(tfidf_pit, a: Counter, b: Counter, section: str, year: int) -> float:
+    ta, tb = tfidf_pit(a, section, year), tfidf_pit(b, section, year)
+    return float("nan") if ta is None else cosine(ta, tb)
+
+
 def compute(con: duckdb.DuckDBPyConnection, log=print) -> int:
     # timestamps stay in SQL (pairs table); Python only sees keys and text
     con.execute(f"create or replace temp table pairs as {PAIRS_SQL}")
-    rows = [dict(zip(("accession", "prior_accession", "section", "text", "prior_text"), r))
-            for r in con.execute("select accession, prior_accession, section, text, prior_text "
-                                 "from pairs").fetchall()]
+    rows = [dict(zip(("accession", "prior_accession", "section", "text", "prior_text", "year"), r))
+            for r in con.execute("select accession, prior_accession, section, text, prior_text, "
+                                 "year(accepted_at) from pairs").fetchall()]
+    accepted_year = dict(con.execute(
+        "select accession, year(min(accepted_at)) from annual_reports group by 1").fetchall())
     log(f"features: {len(rows)} year-over-year section pairs")
     counts = {}
     for r in rows:
@@ -108,6 +119,30 @@ def compute(con: duckdb.DuckDBPyConnection, log=print) -> int:
         w = idf[section]
         return Counter({k: v * w[k] for k, v in cnt.items()})
 
+    # point-in-time IDF: document frequencies accumulated year by year, and
+    # pairs accepted in year Y use only documents accepted before year Y
+    by_year: dict[tuple[str, int], list[Counter]] = {}
+    for (acc, section), cnt in counts.items():
+        by_year.setdefault((section, accepted_year[acc]), []).append(cnt)
+    pit_idf: dict[tuple[str, int], dict] = {}
+    for sec in idf:
+        years = sorted(y for s_, y in by_year if s_ == sec)
+        running, n = Counter(), 0
+        for y in range(years[0], years[-1] + 2):
+            if n:
+                pit_idf[(sec, y)] = {w: math.log((1 + n) / (1 + d)) + 1 for w, d in running.items()}
+            for cnt in by_year.get((sec, y), []):
+                running.update(cnt.keys())
+                n += 1
+
+    def tfidf_pit(cnt: Counter, section: str, year: int) -> Counter | None:
+        w = pit_idf.get((section, year))
+        if w is None:
+            return None
+        # a word never seen before gets the maximum weight (document frequency 0)
+        top = max(w.values())
+        return Counter({k: v * w.get(k, top) for k, v in cnt.items()})
+
     out = []
     for r in rows:
         a = counts[(r["accession"], r["section"])]
@@ -117,13 +152,14 @@ def compute(con: duckdb.DuckDBPyConnection, log=print) -> int:
             "words": sum(a.values()), "prior_words": sum(b.values()),
             "sim_cosine": cosine(a, b), "sim_jaccard": jaccard(a, b),
             "sim_tfidf": cosine(tfidf(a, r["section"]), tfidf(b, r["section"])),
+            "sim_tfidf_pit": _pit_sim(tfidf_pit, a, b, r["section"], r["year"]),
         })
     sims = pa.Table.from_pylist(out)  # noqa: F841 (read by name below)
     con.execute("""
         create or replace table section_changes as
         select p.cik, p.section, p.accession, p.fiscal_period_end, p.accepted_at,
                p.prior_accession, p.prior_period_end,
-               s.words, s.prior_words, s.sim_cosine, s.sim_jaccard, s.sim_tfidf
+               s.words, s.prior_words, s.sim_cosine, s.sim_jaccard, s.sim_tfidf, s.sim_tfidf_pit
         from pairs p join sims s using (accession, section)
     """)
     return len(out)

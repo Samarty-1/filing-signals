@@ -11,7 +11,7 @@ answer:
 | 3a | **Fine-tuned FinBERT: Risk Factors → adverse event in the next 12 months** | ✅ done |
 | 3b | **QLoRA-tuned 1.5B LLM: read reported revenue out of MD&A (XBRL as ground truth)** | ✅ done |
 | 3c | **Fine-tuned embedder: paragraph-level change measure** | ✅ done (negative) |
-| 4 | Pre-registered return test, judged with deflated Sharpe and PBO from [backtest-overfit-audit](https://github.com/Samarty-1/backtest-overfit-audit) | |
+| 4 | **Pre-registered return test** ([pre-registration](docs/PREREGISTRATION.md)), judged with the deflated Sharpe from [backtest-overfit-audit](https://github.com/Samarty-1/backtest-overfit-audit) | 📝 pre-registered; prices pending |
 
 ## Phase 1: what's in the warehouse
 
@@ -345,6 +345,10 @@ filing-signals ingest --years 2010 2024 --firms 1000      # ~45 min, ~1.3 GB on 
 filing-signals parse                                     # Rust section parser, ~20 s
 filing-signals features                                  # year-over-year change measures
 filing-signals report                                    # every finding above
+filing-signals xbrl && filing-signals tickers             # point-in-time tickers from the 10-Ks
+export TIINGO_API_KEY=...                                 # free account at tiingo.com
+filing-signals prices                                     # ~470 symbols, within the free tier
+filing-signals backtest                                   # Phase 4, as pre-registered
 python scripts/bench_parser.py                           # Python-vs-Rust parity and speed
 pytest
 ```
@@ -356,9 +360,14 @@ On Windows without Visual Studio's build tools, the GNU Rust toolchain works
 (`rustup-init --default-host x86_64-pc-windows-gnu`). PyO3's import-library
 step also needs `dlltool` on `PATH`, which MSYS2's binutils provides.
 
-**Known limitation.** `filers.current_tickers` holds today's tickers. Using
-them to map 2012 filings to prices would bring survivorship bias back in.
-Phase 4 needs a point-in-time CIK-to-security map, and this is recorded so it
-isn't forgotten.
+**Point-in-time tickers.** `filers.current_tickers` holds today's tickers:
+half the sampled firms no longer file and have none, so mapping 2012 filings
+through them would reintroduce survivorship bias. Phase 4 reads each 10-K's
+own ticker instead (inline-XBRL tag, else the Item 5 "under the symbol"
+sentence) and resolves it to Tiingo, which keeps delisted securities (SVB's
+history lives under SIVBQ). Tiingo's listed start dates proved unreliable
+(Linear Technology, trading since 1986, is listed from 2016), so matches are
+validated against the cover page instead: price × shares outstanding must be
+consistent with the reported public float.
 
 Data: [SEC EDGAR](https://www.sec.gov/edgar), public domain.

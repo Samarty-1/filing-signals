@@ -1,11 +1,13 @@
 """XBRL facts for the sampled companies (data.sec.gov companyfacts API).
 
-Two uses in Phase 3:
+Uses:
   * size: dei:EntityPublicFloat, the market value of non-affiliate equity a
     10-K reports on its cover page, keyed by that 10-K's accession. It is the
     control the text models must beat, because filing language mostly
     identifies small companies.
   * ground truth: reported annual revenue, the target for the extraction LLM.
+  * Phase 4 ticker validation: dei:EntityCommonStockSharesOutstanding, so a
+    price series can be checked against the float the same 10-K reports.
 
 Only a whitelist of concepts is loaded. Revenue appears under several
 concept names as US GAAP changed (ASC 606 introduced
@@ -21,7 +23,7 @@ from .pipeline import Pipeline, _failure, now
 from .warehouse import upsert
 
 CONCEPTS = {
-    "dei": ["EntityPublicFloat"],
+    "dei": ["EntityPublicFloat", "EntityCommonStockSharesOutstanding"],
     "us-gaap": [
         "Revenues",
         "RevenueFromContractWithCustomerExcludingAssessedTax",
@@ -86,7 +88,11 @@ def load(pipe: Pipeline, log=print) -> int:
     pipe.con.execute(SCHEMA)
     ciks = [c for (c,) in pipe.con.execute(
         "select cik from universe where status = 'included' order by cik").fetchall()]
-    done = {c for (c,) in pipe.con.execute("select distinct cik from xbrl_facts").fetchall()}
+    # a company is done once every whitelisted concept it reports is loaded;
+    # adding a concept re-parses the cached responses without new requests
+    done = {c for (c,) in pipe.con.execute(
+        "select cik from xbrl_facts group by cik having count(distinct concept) filter "
+        "(where concept = 'EntityCommonStockSharesOutstanding') > 0").fetchall()}
     failed = {u for (u,) in pipe.con.execute("select url from fetch_failures").fetchall()}
     total = 0
     for i, cik in enumerate(ciks, start=1):

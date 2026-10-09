@@ -57,3 +57,19 @@ def test_identical_text_scores_one(con):
     sim = con.execute("select sim_cosine, sim_jaccard, sim_tfidf from section_changes "
                       "where accession = 'a21'").fetchone()
     assert sim == pytest.approx((1.0, 1.0, 1.0))
+
+
+def test_pit_tfidf_ignores_later_documents(con):
+    # a20 (accepted 2021) may only use IDF from documents accepted in 2020:
+    # adding a 2024 filing full of "alpha" must not move it
+    before = con.execute("select sim_tfidf_pit from section_changes where accession = 'a20'").fetchone()[0]
+    upsert(con, "filings", [{
+        "accession": "late", "cik": 2, "form": "10-K", "filing_date": ts("2024-03-01").date(),
+        "report_date": ts("2023-12-31").date(), "accepted_api_raw": None, "primary_document": None,
+        "size_bytes": 1, "items": None, "first_seen_at": ts("2024-03-01")}])
+    upsert(con, "filing_headers", [{"accession": "late", "accepted_at": ts("2024-03-01"),
+                                    "header_period": ts("2023-12-31").date(), "fetched_at": ts("2024-03-01")}])
+    con.execute("insert into sections values ('late', 'risk_factors', 'found', 'alpha alpha alpha delta')")
+    features.compute(con, log=lambda *_: None)
+    after = con.execute("select sim_tfidf_pit from section_changes where accession = 'a20'").fetchone()[0]
+    assert before == pytest.approx(after) and 0 < before < 1

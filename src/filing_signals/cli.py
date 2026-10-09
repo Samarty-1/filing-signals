@@ -35,6 +35,10 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("parse", help="extract Risk Factors and MD&A sections (Rust parser)")
     sub.add_parser("features", help="year-over-year section similarity (Lazy Prices)")
     sub.add_parser("xbrl", help="XBRL facts: public float (size) and revenue (ground truth)")
+    sub.add_parser("tickers", help="point-in-time ticker for every report, resolved to Tiingo symbols")
+    sub.add_parser("prices", help="fetch daily prices from Tiingo within the free-tier budget "
+                                  "(needs TIINGO_API_KEY; resumable, rerun until done)")
+    sub.add_parser("backtest", help="Phase 4: the pre-registered return test")
     args = parser.parse_args(argv)
 
     args.data.mkdir(parents=True, exist_ok=True)
@@ -54,6 +58,32 @@ def main(argv: list[str] | None = None) -> None:
         from . import xbrl
         client = EdgarClient(user_agent_from_env())
         xbrl.load(Pipeline(con, client, RawStore(args.data / "raw")))
+    if args.cmd == "tickers":
+        from . import prices
+        lst = args.data / "prices" / "supported_tickers.zip"
+        if not lst.exists():
+            import requests
+            lst.parent.mkdir(parents=True, exist_ok=True)
+            lst.write_bytes(requests.get(prices.TIINGO_LIST_URL, timeout=120).content)
+        prices.build_ticker_map(con, args.data)
+        prices.load_tiingo_list(con, lst)
+        n = con.execute(f"select count(*), count(distinct symbol) from ({prices.RESOLVED_SQL})").fetchone()
+        print(f"tickers: {n[0]:,} reports resolve to {n[1]:,} Tiingo symbols")
+    if args.cmd == "prices":
+        from . import prices
+        # only symbols the test can use: reports with a public float >= $100M
+        symbols = [s for (s,) in con.execute(f"""
+            select distinct r.symbol from ({prices.RESOLVED_SQL}) r
+            join xbrl_facts x on x.accession = r.accession
+            where x.concept = 'EntityPublicFloat' and x.value >= 1e8
+            order by 1""").fetchall()]
+        symbols.append("SPY")       # market check for the factor loadings
+        out = prices.fetch_prices(symbols, args.data / "prices" / "tiingo")
+        print(f"prices: {out}")
+        print(f"daily_prices rows: {prices.load_prices(con, args.data / 'prices' / 'tiingo'):,}")
+    if args.cmd == "backtest":
+        from . import returns
+        returns.run(con, args.data)
     if args.cmd == "report":
         report(con)
     else:
