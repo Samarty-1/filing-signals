@@ -148,3 +148,46 @@ def test_newey_west_constant_is_the_mean():
     beta, se = returns.newey_west_ols(y, np.ones((5, 1)), lags=0)
     assert beta[0] == pytest.approx(y.mean())
     assert se[0] == pytest.approx(y.std(ddof=1) / np.sqrt(5), rel=1e-9)
+
+
+# --- the whole chain on synthetic prices ----------------------------------------------
+
+def _synthetic_chain(drift_per_sim: float, seed: int = 0):
+    """60 firms x 48 months: signals -> next-month returns -> quintile long-short.
+    Firm i's text similarity is fixed; its monthly return is noise plus
+    drift_per_sim x (similarity rank - 0.5)."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    months = pd.date_range("2015-01-31", periods=48, freq="ME")
+    firms = np.arange(60)
+    sim = rng.uniform(0.8, 1.0, len(firms))
+    rank = pd.Series(sim).rank(pct=True).values - 0.5
+    sig = pd.DataFrame([{"month": m, "cik": int(f), "section": "risk_factors", "accession": f"a{f}",
+                         "sim": sim[f], "symbol": f"S{f}", "public_float": 1e9}
+                        for m in months[:-1] for f in firms])
+    rets = pd.DataFrame([{"symbol": f"S{f}", "month": m, "delisted": False,
+                          "ret": rng.normal(drift_per_sim * rank[f], 0.08)}
+                         for m in months[1:] for f in firms])
+    held = returns.holding_returns(sig, rets, pd.DataFrame(columns=["cik", "filing_date"]))
+    return returns.portfolios(held)
+
+
+def test_planted_effect_is_found_with_the_right_sign(monkeypatch):
+    monkeypatch.setattr(returns, "MIN_FIRMS", 50)
+    ls = _synthetic_chain(0.04).query("weighting == 'ew'").ls
+    assert len(ls) == 47
+    assert ls.mean() / (ls.std() / len(ls) ** 0.5) > 3         # Q5 - Q1 = most similar minus most changed
+
+
+def test_pure_noise_is_not_significant(monkeypatch):
+    monkeypatch.setattr(returns, "MIN_FIRMS", 50)
+    ls = _synthetic_chain(0.0, seed=1).query("weighting == 'ew'").ls
+    assert abs(ls.mean() / (ls.std() / len(ls) ** 0.5)) < 2.5
+
+
+def test_backtest_refuses_a_second_run(tmp_path):
+    (tmp_path / "prices").mkdir()
+    (tmp_path / "prices" / "phase4_results.json").write_text("{}")
+    with pytest.raises(returns.AlreadyRun):
+        returns.run(connect(":memory:"), tmp_path)

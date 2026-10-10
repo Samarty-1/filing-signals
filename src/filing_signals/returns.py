@@ -275,7 +275,7 @@ def deflated_sharpe(trials: dict[str, pd.Series], chosen: str) -> dict:
     s = sr[chosen]
     z = (s - sr_max) * math.sqrt(n - 1) / math.sqrt(1 - skew * s + (kurt - 1) / 4 * s * s)
     return {"n_trials": n_trials, "sharpe_monthly": round(float(s), 4),
-            "expected_max_sharpe_null": round(sr_max, 4), "dsr": round(float(stats.norm.cdf(z)), 3)}
+            "expected_max_sharpe_null": round(float(sr_max), 4), "dsr": round(float(stats.norm.cdf(z)), 3)}
 
 
 def minimum_detectable_effect(ls: pd.Series, power: float = 0.8, alpha: float = 0.05) -> float:
@@ -285,7 +285,18 @@ def minimum_detectable_effect(ls: pd.Series, power: float = 0.8, alpha: float = 
     return float(z * ls.std(ddof=1) / math.sqrt(len(ls)))
 
 
-def run(con: duckdb.DuckDBPyConnection, data: Path, log=print) -> dict:
+class AlreadyRun(RuntimeError):
+    pass
+
+
+def run(con: duckdb.DuckDBPyConnection, data: Path, log=print, force: bool = False) -> dict:
+    """The pre-registered test runs once. A second run would let the result
+    be re-rolled after seeing it, so it refuses unless forced, and a forced
+    rerun is recorded as such in the results."""
+    done = data / "prices" / "phase4_results.json"
+    if done.exists() and not force:
+        raise AlreadyRun(f"{done} exists: the pre-registered test has already run. "
+                         "Rerunning is exploratory; pass --force and say so in the write-up.")
     v = validate_matches(con)
     log(f"symbols: {len(v)} reports resolved, {int(v.has_price.sum())} priced near filing, "
         f"{int((v.has_price & v.size_ok).sum())} pass the float/market-cap check")
@@ -293,7 +304,7 @@ def run(con: duckdb.DuckDBPyConnection, data: Path, log=print) -> dict:
     sig = signals(con)
     bankrupt = bankruptcy_filers(con)
     factors = load_factors(data / "prices" / "french")
-    results = {"validation": {"resolved": len(v), "priced": int(v.has_price.sum()),
+    results = {"forced_rerun": done.exists(), "validation": {"resolved": len(v), "priced": int(v.has_price.sum()),
                               "accepted": int((v.has_price & v.size_ok).sum())}}
     for adjust in (True, False):
         held = holding_returns(sig, rets, bankrupt, delist_adjust=adjust)
@@ -314,6 +325,7 @@ def run(con: duckdb.DuckDBPyConnection, data: Path, log=print) -> dict:
             block["shumway_adjusted_obs"] = int(held.get("shumway_adjusted", pd.Series(dtype=bool)).sum())
             port.to_parquet(data / "prices" / "portfolios.parquet")
         results[key] = block
-        log(f"{key}: {json.dumps({k: v.get('t_alpha_nw') if isinstance(v, dict) else v for k, v in block.items()})}")
+        summary = {k: (v.get("t_alpha_nw", v.get("dsr")) if isinstance(v, dict) else v) for k, v in block.items()}
+        log(f"{key}: {json.dumps(summary)}")
     (data / "prices" / "phase4_results.json").write_text(json.dumps(results, indent=2, default=str))
     return results

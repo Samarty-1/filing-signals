@@ -38,7 +38,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("tickers", help="point-in-time ticker for every report, resolved to Tiingo symbols")
     sub.add_parser("prices", help="fetch daily prices from Tiingo within the free-tier budget "
                                   "(needs TIINGO_API_KEY; resumable, rerun until done)")
-    sub.add_parser("backtest", help="Phase 4: the pre-registered return test")
+    bt = sub.add_parser("backtest", help="Phase 4: the pre-registered return test (runs once)")
+    bt.add_argument("--force", action="store_true", help="rerun anyway; recorded as exploratory")
     exp = sub.add_parser("export", help="Phase 5: static JSON for the TypeScript explorer (web/)")
     exp.add_argument("--out", type=Path, default=Path("web/public/data"))
     args = parser.parse_args(argv)
@@ -85,7 +86,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"daily_prices rows: {prices.load_prices(con, args.data / 'prices' / 'tiingo'):,}")
     if args.cmd == "backtest":
         from . import returns
-        returns.run(con, args.data)
+        returns.run(con, args.data, force=args.force)
     if args.cmd == "export":
         from . import export
         export.run(con, args.data, args.out)

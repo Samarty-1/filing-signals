@@ -304,6 +304,17 @@ A harder objective (hard negatives from the same filing, or labels from
 deal 8-Ks) would have to be chosen on the validation years before touching
 test again. That hasn't been done, so this stands as the result.
 
+**Dry run.** Before any real price exists, the whole Phase 4 chain was run
+on synthetic prices in a throwaway copy of the warehouse:
+- **Pure random walks:** the result was NOT CONFIRMED (primary t = 1.26,
+  deflated Sharpe 0.34).
+- **Planted drift towards steadier-text firms:** the result was CONFIRMED,
+  with the right sign (t = 5.29).
+
+So the test can both pass and fail. The same check is now a unit test.
+`backtest` refuses a second run unless forced, and a forced rerun is
+recorded in the results.
+
 ## Phase 5: the explorer
 
 **[samarty-1.github.io/filing-signals](https://samarty-1.github.io/filing-signals/)** is a static TypeScript site
@@ -377,7 +388,8 @@ filing-signals report                                    # every finding above
 filing-signals xbrl && filing-signals tickers             # point-in-time tickers from the 10-Ks
 export TIINGO_API_KEY=...                                 # free account at tiingo.com
 filing-signals prices                                     # ~470 symbols, within the free tier
-filing-signals backtest                                   # Phase 4, as pre-registered
+filing-signals backtest                                   # Phase 4, as pre-registered (runs once)
+# or all of Phase 4 detached and resumable on Windows: scriptsun_phase4.cmd
 python scripts/bench_parser.py                           # Python-vs-Rust parity and speed
 pytest
 ```
