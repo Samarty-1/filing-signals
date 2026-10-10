@@ -39,6 +39,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("prices", help="fetch daily prices from Tiingo within the free-tier budget "
                                   "(needs TIINGO_API_KEY; resumable, rerun until done)")
     sub.add_parser("backtest", help="Phase 4: the pre-registered return test")
+    exp = sub.add_parser("export", help="Phase 5: static JSON for the TypeScript explorer (web/)")
+    exp.add_argument("--out", type=Path, default=Path("web/public/data"))
     args = parser.parse_args(argv)
 
     args.data.mkdir(parents=True, exist_ok=True)
@@ -84,6 +86,9 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "backtest":
         from . import returns
         returns.run(con, args.data)
+    if args.cmd == "export":
+        from . import export
+        export.run(con, args.data, args.out)
     if args.cmd == "report":
         report(con)
     else:

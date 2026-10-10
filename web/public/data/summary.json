@@ -1,0 +1,349 @@
+{
+ "counts": {
+  "reports": 8082,
+  "firms": 999,
+  "amendments": 1175,
+  "section_pairs": 10431,
+  "first_fy": 2000,
+  "last_fy": 2024
+ },
+ "results": {
+  "baseline": {
+   "prior_event": {
+    "n": 1560,
+    "positives": 163,
+    "auc": 0.557,
+    "auc_ci": [
+     0.524,
+     0.592
+    ],
+    "avg_precision": 0.125,
+    "avg_precision_ci": [
+     0.101,
+     0.156
+    ],
+    "base_rate": 0.104
+   },
+   "size+prior": {
+    "n": 1560,
+    "positives": 163,
+    "auc": 0.697,
+    "auc_ci": [
+     0.654,
+     0.739
+    ],
+    "avg_precision": 0.183,
+    "avg_precision_ci": [
+     0.146,
+     0.232
+    ],
+    "base_rate": 0.104
+   },
+   "tfidf": {
+    "C": 0.03,
+    "val_auc": 0.743,
+    "n": 1560,
+    "positives": 163,
+    "auc": 0.746,
+    "auc_ci": [
+     0.705,
+     0.786
+    ],
+    "avg_precision": 0.227,
+    "avg_precision_ci": [
+     0.184,
+     0.282
+    ],
+    "base_rate": 0.104
+   },
+   "tfidf+size+prior": {
+    "C": 0.1,
+    "val_auc": 0.767,
+    "n": 1560,
+    "positives": 163,
+    "auc": 0.74,
+    "auc_ci": [
+     0.701,
+     0.779
+    ],
+    "avg_precision": 0.213,
+    "avg_precision_ci": [
+     0.174,
+     0.265
+    ],
+    "base_rate": 0.104
+   },
+   "by_event": {
+    "size+prior": {
+     "bankruptcy": 0.732,
+     "restatement": 0.609,
+     "auditor_change": 0.714
+    },
+    "tfidf": {
+     "bankruptcy": 0.621,
+     "restatement": 0.764,
+     "auditor_change": 0.74
+    },
+    "tfidf+size+prior": {
+     "bankruptcy": 0.701,
+     "restatement": 0.705,
+     "auditor_change": 0.744
+    }
+   },
+   "text_vs_size": {
+    "auc_diff": 0.043,
+    "ci": [
+     0.024,
+     0.064
+    ]
+   }
+  },
+  "encoder": {
+   "model": "yiyanghkust/finbert-pretrain",
+   "epochs_run": 4,
+   "best_epoch": 1,
+   "history": [
+    {
+     "epoch": 1,
+     "train_loss": 1.191,
+     "val_auc": 0.719,
+     "minutes": 6.1
+    },
+    {
+     "epoch": 2,
+     "train_loss": 1.1265,
+     "val_auc": 0.667,
+     "minutes": 6.1
+    },
+    {
+     "epoch": 3,
+     "train_loss": 1.0541,
+     "val_auc": 0.677,
+     "minutes": 6.3
+    },
+    {
+     "epoch": 4,
+     "train_loss": 0.9731,
+     "val_auc": 0.666,
+     "minutes": 6.4
+    }
+   ],
+   "encoder": {
+    "n": 1560,
+    "positives": 163,
+    "auc": 0.724,
+    "auc_ci": [
+     0.68,
+     0.765
+    ],
+    "avg_precision": 0.21,
+    "avg_precision_ci": [
+     0.171,
+     0.263
+    ],
+    "base_rate": 0.104
+   },
+   "encoder+size+prior": {
+    "n": 1560,
+    "positives": 163,
+    "auc": 0.739,
+    "auc_ci": [
+     0.699,
+     0.779
+    ],
+    "avg_precision": 0.209,
+    "avg_precision_ci": [
+     0.172,
+     0.261
+    ],
+    "base_rate": 0.104
+   },
+   "encoder_by_event": {
+    "bankruptcy": 0.584,
+    "restatement": 0.752,
+    "auditor_change": 0.719
+   },
+   "vs_tfidf": {
+    "auc_diff": -0.022,
+    "ci": [
+     -0.041,
+     -0.003
+    ]
+   },
+   "combined_vs_tfidf+size+prior": {
+    "auc_diff": -0.001,
+    "ci": [
+     -0.016,
+     0.014
+    ]
+   },
+   "combined_vs_size+prior": {
+    "auc_diff": 0.042,
+    "ci": [
+     0.012,
+     0.072
+    ]
+   }
+  },
+  "llm_extract": {
+   "model": "Qwen/Qwen2.5-1.5B-Instruct",
+   "train_examples": 2006,
+   "train_answerable": 0.708,
+   "regex": {
+    "answerable_n": 874,
+    "accuracy_answerable": 0.189,
+    "answered_answerable": 0.955,
+    "unanswerable_n": 320,
+    "abstain_unanswerable": 0.222,
+    "accuracy_all": 0.139
+   },
+   "zero_shot": {
+    "answerable_n": 874,
+    "accuracy_answerable": 0.246,
+    "answered_answerable": 0.978,
+    "unanswerable_n": 320,
+    "abstain_unanswerable": 0.175,
+    "accuracy_all": 0.183
+   },
+   "qlora": {
+    "answerable_n": 874,
+    "accuracy_answerable": 0.484,
+    "answered_answerable": 0.515,
+    "unanswerable_n": 320,
+    "abstain_unanswerable": 0.953,
+    "accuracy_all": 0.356
+   }
+  },
+  "embed_change": {
+   "base_model": "BAAI/bge-small-en-v1.5",
+   "edit_pairs": 40000,
+   "mdna": {
+    "pairs": 1251,
+    "deal_pairs": 152,
+    "tfidf": {
+     "n": 1251,
+     "positives": 152,
+     "auc": 0.684,
+     "auc_ci": [
+      0.639,
+      0.729
+     ],
+     "avg_precision": 0.246,
+     "avg_precision_ci": [
+      0.19,
+      0.316
+     ],
+     "base_rate": 0.122
+    },
+    "novelty_base": {
+     "n": 1251,
+     "positives": 152,
+     "auc": 0.655,
+     "auc_ci": [
+      0.606,
+      0.704
+     ],
+     "avg_precision": 0.209,
+     "avg_precision_ci": [
+      0.167,
+      0.277
+     ],
+     "base_rate": 0.122
+    },
+    "novelty_tuned": {
+     "n": 1251,
+     "positives": 152,
+     "auc": 0.661,
+     "auc_ci": [
+      0.612,
+      0.712
+     ],
+     "avg_precision": 0.216,
+     "avg_precision_ci": [
+      0.173,
+      0.282
+     ],
+     "base_rate": 0.122
+    },
+    "tuned_vs_tfidf": {
+     "auc_diff": -0.023,
+     "ci": [
+      -0.062,
+      0.016
+     ]
+    },
+    "tuned_vs_base": {
+     "auc_diff": 0.006,
+     "ci": [
+      -0.005,
+      0.018
+     ]
+    }
+   },
+   "risk_factors": {
+    "pairs": 1227,
+    "deal_pairs": 153,
+    "tfidf": {
+     "n": 1227,
+     "positives": 153,
+     "auc": 0.637,
+     "auc_ci": [
+      0.587,
+      0.688
+     ],
+     "avg_precision": 0.21,
+     "avg_precision_ci": [
+      0.167,
+      0.277
+     ],
+     "base_rate": 0.125
+    },
+    "novelty_base": {
+     "n": 1227,
+     "positives": 153,
+     "auc": 0.575,
+     "auc_ci": [
+      0.523,
+      0.625
+     ],
+     "avg_precision": 0.183,
+     "avg_precision_ci": [
+      0.144,
+      0.238
+     ],
+     "base_rate": 0.125
+    },
+    "novelty_tuned": {
+     "n": 1227,
+     "positives": 153,
+     "auc": 0.57,
+     "auc_ci": [
+      0.517,
+      0.621
+     ],
+     "avg_precision": 0.185,
+     "avg_precision_ci": [
+      0.144,
+      0.241
+     ],
+     "base_rate": 0.125
+    },
+    "tuned_vs_tfidf": {
+     "auc_diff": -0.067,
+     "ci": [
+      -0.106,
+      -0.028
+     ]
+    },
+    "tuned_vs_base": {
+     "auc_diff": -0.005,
+     "ci": [
+      -0.013,
+      0.003
+     ]
+    }
+   }
+  },
+  "phase4": null
+ }
+}

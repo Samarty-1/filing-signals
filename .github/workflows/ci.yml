@@ -26,3 +26,21 @@ jobs:
       # Offline: the pipeline tests use a fake EDGAR, and every section-parsing
       # spec test runs against both the Python reference and the Rust parser.
       - run: pytest -q
+
+  web:
+    # Phase 5 explorer: strict type-check, unit tests, production build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build

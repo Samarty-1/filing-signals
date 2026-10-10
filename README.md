@@ -12,6 +12,7 @@ answer:
 | 3b | **QLoRA-tuned 1.5B LLM: read reported revenue out of MD&A (XBRL as ground truth)** | ✅ done |
 | 3c | **Fine-tuned embedder: paragraph-level change measure** | ✅ done (negative) |
 | 4 | **Pre-registered return test** ([pre-registration](docs/PREREGISTRATION.md)), judged with the deflated Sharpe from [backtest-overfit-audit](https://github.com/Samarty-1/backtest-overfit-audit) | 📝 pre-registered; prices pending |
+| 5 | **[Explorer](https://samarty-1.github.io/filing-signals/)**: TypeScript front end over every firm, report, change score, 8-K event and model output | ✅ done |
 
 ## Phase 1: what's in the warehouse
 
@@ -302,6 +303,34 @@ reasons:
 A harder objective (hard negatives from the same filing, or labels from
 deal 8-Ks) would have to be chosen on the validation years before touching
 test again. That hasn't been done, so this stands as the result.
+
+## Phase 5: the explorer
+
+**[samarty-1.github.io/filing-signals](https://samarty-1.github.io/filing-signals/)** is a static TypeScript site
+over the whole warehouse:
+- **Results:** every phase's headline tables, read from the same JSON the
+  pipeline wrote.
+- **Firms:** all 999 firms, searchable by name, ticker, CIK or industry, and
+  sortable by the biggest Risk Factors rewrite or the most 8-K events.
+- **Firm pages:** a year-over-year similarity chart with bankruptcy,
+  restatement, auditor-change and deal 8-Ks marked. Each report shows:
+  - when it became public (flagged when it was after hours)
+  - the ticker as written in the filing
+  - its Phase 3a risk percentile
+  - for test-year reports, the fine-tuned LLM's and the zero-shot model's
+    revenue answers against XBRL
+
+`filing-signals export` writes 3.4 MB of JSON into `web/public/data`, which
+is committed so the site builds in CI without the 1.3 GB raw store. The app
+is strict TypeScript with no UI framework. The chart is hand-written SVG
+whose scale and tick logic is unit-tested. One fixed bug: a tick at 0.975
+printed as "0.97", so labels now use the fewest decimals that print every
+tick exactly. CI type-checks, tests and builds it, and a Pages workflow
+deploys it.
+
+```bash
+cd web && npm ci && npm run dev      # http://localhost:5173
+```
 
 ## Engineering
 
